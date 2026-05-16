@@ -112,23 +112,26 @@ class OCR:
 
     def read_cash(self, img):
         """
-        Lit $XXX,XXX (billet vert, texte blanc sur fond sombre).
-        Utilise prétraitement inversé adapté au HUD.
+        Lit le cash ($XXX,XXX) en haut à gauche.
+        Prend le plus grand montant trouvé pour éviter les faux positifs.
         """
         h, w = img.shape[:2]
         zone = img[0:int(h*0.06), 0:int(w*0.25)]
-        proc, sc = self._pre_light(zone)
+        proc, _ = self._pre_light(zone)
         txt = pytesseract.image_to_string(proc,
             lang=config.OCR_LANG, config=config.OCR_CONFIG)
-        matches = re.findall(r'\$([\d,]{3,})', txt)
+        # Cherche tous les montants avec $
+        matches = re.findall(r'\$([\d,]+)', txt)
+        best = None
         for m in matches:
             try:
                 val = float(m.replace(",", ""))
-                if 1000 < val < 1_000_000_000:
-                    return val
+                if 100 < val < 100_000_000:
+                    if best is None or val > best:
+                        best = val
             except ValueError:
                 pass
-        return None
+        return best
 
     def read_coins(self, img):
         """
