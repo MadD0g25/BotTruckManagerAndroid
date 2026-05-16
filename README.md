@@ -6,9 +6,9 @@ Bot Python automatisant le jeu mobile **Truck Manager** (Trophy Games) via ADB d
 
 - ✅ Détecte les camions **Au Repos** et clique "Tout Envoyer" automatiquement
 - ✅ Lit les timers **En Route** et dort intelligemment jusqu'à la prochaine arrivée
-- ✅ Gère les camions **Garés** (retour Au Repos) EN DEVELOPPEMENT
-- ✅ Gère les camions **En Attente** (réparation/CT) EN DEVELOPPEMENT
-- ✅ Vérifie les ressources (Diesel, kWh, CO2) et achète si nécessaire EN DEVELOPPEMENT
+- ✅ Gère les camions **Garés** (retour Au Repos)
+- ✅ Gère les camions **En Attente** (réparation/CT)
+- ✅ Vérifie les ressources (Diesel, kWh, CO2) et achète si nécessaire
 - ✅ Ferme les popups automatiquement
 - ✅ OCR via Tesseract pour lire le tableau de bord
 
@@ -40,6 +40,9 @@ pip3 install opencv-python-headless numpy pillow pytesseract
 
 ## Installation
 
+```bash
+git clone https://github.com/VOTRE_USER/truck-manager-bot.git
+cd truck-manager-bot
 
 # Vérifier la connexion ADB
 adb devices

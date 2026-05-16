@@ -134,6 +134,13 @@ class ADB:
         log.debug("👆 tap(%d,%d) → natif(%d,%d)", x, y, real_x, real_y)
         time.sleep(0.4)
 
+    def drag(self, x1, y1, x2, y2, ms=2000):
+        """Drag avec draganddrop — nécessaire pour les sliders."""
+        self._adb("shell", "input", "draganddrop",
+                  str(int(x1*2)), str(int(y1*2)),
+                  str(int(x2*2)), str(int(y2*2)), str(ms))
+        time.sleep(0.5)
+
     def swipe(self, x1, y1, x2, y2, ms=400):
         """Swipe en coordonnées du screenshot réduit → converti en natif x2."""
         self._adb("shell", "input", "swipe",

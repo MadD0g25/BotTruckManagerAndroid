@@ -282,6 +282,80 @@ class OCR:
 
     def read_table_agrandi(self, img, etat):
         """
+        Lit le tableau agrandi.
+        Au Repos : compte uniquement les lignes (Reg seulement).
+        En Attente : Reg + timer Prêt dans.
+        """
+        import re as re2
+
+        h, w = img.shape[:2]
+        y1 = int(h * 0.08)
+        y2 = int(h * 0.47)
+        zone = img[y1:y2, 0:int(w*0.95)]
+        zone_h = y2 - y1
+
+        proc, sc = self._pre_table(zone)
+        txt = pytesseract.image_to_string(
+            proc, lang=config.OCR_LANG, config="--psm 6 --oem 3")
+
+        log.debug("read_table_%s brut: %s", etat, repr(txt[:300]))
+
+        rows = []
+        data_lines = []
+        for line in txt.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            # Ignore en-têtes
+            if re2.search(r'\bType\b|\bReg\b|\bUsure\b|\bItinéraire\b|\bStatut\b',
+                          line, re2.I):
+                continue
+            # Au Repos : ligne valide = contient une immatriculation probable
+            if etat == "au_repos":
+                # Cherche token alphanumérique avec chiffres
+                if re2.search(r'[A-Z]{2,4}[\d]{3,}|[\d]{3,}[A-Z]{2,}', line.upper()):
+                    data_lines.append(line)
+            # En Attente : ligne valide = contient un timer
+            elif etat == "en_attente" and re2.search(r'\d+:\d{2}:\d{2}', line):
+                data_lines.append(line)
+
+        for idx, line in enumerate(data_lines):
+            row_y = y1 + int(zone_h * (idx + 1.5) / max(len(data_lines), 1))
+
+            row = {"row_y": row_y, "reg": None, "usure": None,
+                   "ct_jours": None, "arrivee_s": None,
+                   "pret_dans_s": None, "destination": None,
+                   "itineraire": None}
+
+            # Immatriculation
+            for token in re2.findall(r'\b([A-Z0-9]{5,8})\b', line.upper()):
+                if re2.search(r'[A-Z]', token) and re2.search(r'\d{3,}', token):
+                    row["reg"] = token
+                    break
+            if not row["reg"]:
+                row["reg"] = f"CAM_{idx+1}"
+
+            # Destination — codes 3 lettres destinations connues
+            # Exclut les origines (STR, SAA) et mots-clés tableau
+            skip = {"STR","SAA","LOC","LIG","SEC","REF","SèC","RéF",
+                    "SEQ","FAG","KAY","ORI","ERE","TEM","ARR","PRO",
+                    "SEE","SEc","sTR","s8j","58j"}
+            known_dest = {"RAS","HAG","KEH","BAD","OFF","MUL","KAR",
+                          "NEU","LYO","PAR","MAR","NAN","BOR","TOU",
+                          "LIL","NIC","GRE","MON","REN","DIJ","MET",
+                          "SXB","STA","AMB","CAR","DAX","GAP","NIM",
+                          "ROC","SEN","TRO","VAL","VAN"}
+            for word in re2.findall(r'\b([A-Z]{3})\b', line.upper()):
+                if word in known_dest:
+                    row["destination"] = word
+                    break
+
+            rows.append(row)
+            log.info("  [%d] %s → %s", idx+1, row["reg"],
+                     row["destination"] or "?")
+
+        return rows
+        """
         Lit le tableau agrandi en parsant le texte brut ligne par ligne.
         Utilise image_to_string (plus robuste que image_to_data pour tableaux).
         """

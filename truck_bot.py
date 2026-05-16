@@ -258,7 +258,7 @@ class TruckBot:
     def action_lire_tous_etats(self):
         """
         Après Tout Envoyer : lit l'onglet En Route pour les timers.
-        Ne vérifie pas l'état — lit directement le tableau.
+        Retry une fois si aucun timer détecté.
         """
         self.assurer_panneau_agrandi()
         time.sleep(0.5)
@@ -269,13 +269,23 @@ class TruckBot:
         self.assurer_panneau_agrandi()
 
         s = self._s()
+        rows = []
         if s is not None:
             rows = self.ocr.read_table_en_route(s)
-            if rows:
-                self.action_en_route(rows)
-                log.info("  ✅ %d timer(s) notés", len(rows))
-            else:
-                log.info("  Aucun camion En Route détecté")
+
+        # Retry si aucun timer détecté
+        if not rows:
+            log.info("  ⚠️  Aucun timer — retry dans 3s...")
+            time.sleep(3.0)
+            s = self._s()
+            if s is not None:
+                rows = self.ocr.read_table_en_route(s)
+
+        if rows:
+            self.action_en_route(rows)
+            log.info("  ✅ %d timer(s) notés", len(rows))
+        else:
+            log.info("  Aucun camion En Route détecté")
 
         # Retour Au Repos
         self.adb.tap(*config.COORDS_TAB_AU_REPOS)
@@ -346,11 +356,17 @@ class TruckBot:
         log.info("│  🚛 Camions : %-3d lignes             │", len(rows))
 
         for row in rows:
-            usure_str = f"{row['usure']:.1f}%" if row['usure'] is not None else "?"
-            ct_str    = f"{row['ct_jours']}j"  if row['ct_jours'] is not None else "?"
-            dest_str  = row.get('destination') or "-"
-            log.info("│    %-10s usure=%-5s CT=%-4s → %-3s  │",
-                     row['reg'] or "?", usure_str, ct_str, dest_str)
+            reg_str  = row.get('reg') or "?"
+            dest_str = row.get('destination') or "-"
+            if row.get('arrivee_s') is not None:
+                h2 = row['arrivee_s'] // 3600
+                m2 = (row['arrivee_s'] % 3600) // 60
+                s2 = row['arrivee_s'] % 60
+                log.info("│    %-10s → %-3s  %02d:%02d:%02d            │",
+                         reg_str, dest_str, h2, m2, s2)
+            else:
+                log.info("│    %-10s → %-3s                      │",
+                         reg_str, dest_str)
 
         if self.timers.timers:
             log.info("│  ⏱️  Timers actifs :                 │")
@@ -467,47 +483,44 @@ class TruckBot:
     # ── Ressources ────────────────────────────────────────────────
 
     def _acheter_ressource(self, coords, titre, label, seuil):
+        """
+        Ouvre la jauge, glisse le slider au max et clique Acheter.
+        """
         self.adb.tap(*coords)
-        time.sleep(1.0)
+        time.sleep(1.5)
         s = self._s()
         if s is None:
             return False
 
-        if not self.ocr.has(s, titre):
+        # Vérifie qu'on est bien sur un menu ressource
+        # L'OCR lit "Augmenter" et "capacité" sur ce menu
+        if not self.ocr.has(s, ["Augmenter", "capacité", "Acheter", "Coût"]):
+            log.info("  %s : menu non trouvé", label)
             self.adb.back()
+            time.sleep(0.5)
             return False
 
-        cur, mx, pct = self.ocr.read_resource_level(s)
-        if pct is not None:
-            log.info("  %s : %.0f%%", label, pct)
-            if pct >= seuil:
-                self.adb.back()
-                return False
-            log.warning("  ⚠️  %s bas (%.0f%%)", label, pct)
-        else:
-            self.adb.back()
-            return False
-
+        # Glisse le slider au maximum avec draganddrop
+        # x=820 fonctionne pour Diesel, kWh et CO2
         h, w = s.shape[:2]
-        self.adb.swipe(int(w*config.SLIDER_X1_RATIO), int(h*config.SLIDER_Y_RATIO),
-                       int(w*config.SLIDER_X2_RATIO), int(h*config.SLIDER_Y_RATIO), 500)
-        time.sleep(0.5)
+        slider_y  = int(h * 0.717)   # natif y=860 / 1200
+        slider_x1 = int(w * 0.427)   # natif x=820 / 1920
+        slider_x2 = int(w * 0.625)   # natif x=1200 / 1920
+        self.adb.drag(slider_x1, slider_y, slider_x2, slider_y, 3000)
+        time.sleep(1.5)
 
+        # Clique Acheter par coordonnées fixes (natif 1315x855)
+        acheter_x = int(w * 0.685)   # 1315/1920
+        acheter_y = int(h * 0.713)   # 855/1200
+        self.adb.tap(acheter_x, acheter_y)
+        time.sleep(0.8)
         s2 = self._s()
-        if s2:
-            r = self.ocr.find(s2, T["acheter"])
-            if r:
-                self.adb.tap(r.cx, r.cy)
-                time.sleep(0.8)
-                s3 = self._s()
-                if s3:
-                    self.dismiss_popups(s3)
-                log.info("  ✅ %s acheté", label)
-                self.adb.back()
-                return True
-
+        if s2 is not None:
+            self.dismiss_popups(s2)
+        log.info("  ✅ %s acheté", label)
         self.adb.back()
-        return False
+        time.sleep(0.5)
+        return True
 
     def action_ressources(self):
         log.info("⛽ Vérification ressources...")
@@ -591,9 +604,7 @@ class TruckBot:
         time.sleep(2)
         self.agrandir_panneau()
 
-        garage_ctr     = 0
         ressources_ctr = 0
-        siege_ctr      = 0
 
         while True:
             self.cycle += 1
@@ -603,27 +614,31 @@ class TruckBot:
                 if not self.adb.is_app_foreground():
                     log.warning("App en arrière-plan → relancement")
                     self.adb.launch_app()
+                    time.sleep(3)
                     self.agrandir_panneau()
 
                 # ── Ferme popups ──────────────────────────────
                 self.dismiss_popups()
 
-                # ── Screenshot + infos générales ──────────────
-                s     = self._s()
+                # ── Force l'agrandissement à chaque cycle ─────
+                self.agrandir_panneau()
+                time.sleep(0.5)
+                s = self._s()
+
+                # ── Infos générales ───────────────────────────
                 cash  = self.ocr.read_cash(s)  if s is not None else None
                 coins = self.ocr.read_coins(s) if s is not None else None
                 subv  = self.ocr.read_subvention(s) if s is not None else (None, None, None)
 
-                # ── Détecte l'état du panneau ─────────────────
-                self.assurer_panneau_agrandi()
-                s       = self._s()
+                # ── Détecte l'état ────────────────────────────
                 results = self.ocr.scan(s) if s is not None else []
                 etat    = self.ocr.detect_panel_state(s, results=results) if s is not None else None
 
-                # ── Lit le tableau selon l'état ───────────────
+                # ── Lit le tableau ────────────────────────────
                 rows = []
                 if s is not None and etat:
                     rows = self.ocr.read_table_agrandi(s, etat)
+
                 # ── Résumé ────────────────────────────────────
                 self._log_resume(etat, rows, cash, coins, subv)
 
@@ -636,56 +651,43 @@ class TruckBot:
 
                 # ── Actions selon état ────────────────────────
                 if etat == "au_repos":
-                    # Lit le chiffre Au Repos pour savoir s'il y a des camions
-                    count = self.ocr.read_count_au_repos(s) if s is not None else None
-                    log.info("  🏠 Camions Au Repos : %s", count if count is not None else "?")
-                    if count is None or count > 0:
+                    count = len(rows)
+                    log.info("  🏠 Camions Au Repos : %d", count)
+                    if count > 0:
                         self.action_au_repos(rows)
+                    else:
+                        # Pas de camions Au Repos → va lire En Route si pas de timers
+                        if not self.timers.timers:
+                            log.info("  Aucun timer actif → lecture En Route")
+                            self.action_lire_tous_etats()
+                        else:
+                            log.info("  Aucun camion Au Repos")
 
-                elif etat == "gare" and rows:
-                    self.action_gare(rows)
-                    # Après remise Au Repos, agrandit et envoie
-                    time.sleep(1.0)
-                    self.assurer_panneau_agrandi()
-                    s2 = self._s()
-                    if s2:
-                        rows2 = self.ocr.read_table_agrandi(s2, "au_repos")
-                        if rows2:
-                            self.action_au_repos(rows2)
-
-                elif etat == "en_route" and rows:
-                    self.action_en_route(rows)
+                elif etat == "en_route":
+                    log.info("  🚛 En Route — timers actifs")
 
                 elif etat == "en_attente" and rows:
                     self.action_en_attente(rows)
 
-                # ── Ressources ────────────────────────────────
+                elif etat in ("gare", None):
+                    # Gare ignoré + état inconnu → retour Au Repos
+                    log.info("  ↩️  État %s → tap Au Repos", etat)
+                    self.adb.tap(*config.COORDS_TAB_AU_REPOS)
+                    time.sleep(1.5)
+
+                # ── Ressources (tous les N cycles) ───────────
                 ressources_ctr += 1
                 if ressources_ctr >= config.RESSOURCES_CHECK_EVERY:
                     ressources_ctr = 0
                     self.action_ressources()
                     self.dismiss_popups()
-
-                # ── Garage ────────────────────────────────────
-                garage_ctr += 1
-                if garage_ctr >= config.GARAGE_CHECK_EVERY:
-                    garage_ctr = 0
-                    self.action_garage_entretien()
-                    self.dismiss_popups()
-
-                # ── Siège ─────────────────────────────────────
-                siege_ctr += 1
-                if siege_ctr >= config.SIEGE_CHECK_EVERY:
-                    siege_ctr = 0
-                    self.action_siege(cash)
-                    self.dismiss_popups()
+                    # Réagrandit après les ressources
+                    self.assurer_panneau_agrandi()
 
                 # ── Délai intelligent ─────────────────────────
                 next_arr = self.timers.next_arrival()
                 if next_arr is not None and next_arr > 0:
-                    # Dort jusqu'au prochain timer + buffer
-                    delay = min(int(next_arr) + config.TIMER_BUFFER,
-                                3600)  # max 1h
+                    delay = min(int(next_arr) + config.TIMER_BUFFER, 3600)
                     log.info("⏱️  Prochain camion dans %dm%02ds → cycle dans %dm%02ds",
                              int(next_arr)//60, int(next_arr)%60,
                              delay//60, delay%60)
@@ -697,7 +699,7 @@ class TruckBot:
 
             except Exception as e:
                 self._err += 1
-                log.error("Erreur cycle #%d : %s", self.cycle, e)
+                log.error("Erreur cycle #%d : %s", self.cycle, e, exc_info=True)
                 if self._err >= 5:
                     if not self.adb.reconnect():
                         break
