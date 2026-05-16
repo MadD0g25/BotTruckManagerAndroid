@@ -1,0 +1,6 @@
+*.pyc
+__pycache__/
+timers.json
+truck_bot.log
+*.log
+.env
