@@ -40,9 +40,7 @@ pip3 install opencv-python-headless numpy pillow pytesseract
 
 ## Installation
 
-```bash
-git clone https://github.com/VOTRE_USER/truck-manager-bot.git
-cd truck-manager-bot
+
 
 # Vérifier la connexion ADB
 adb devices
