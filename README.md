@@ -6,9 +6,9 @@ Bot Python automatisant le jeu mobile **Truck Manager** (Trophy Games) via ADB d
 
 - ✅ Détecte les camions **Au Repos** et clique "Tout Envoyer" automatiquement
 - ✅ Lit les timers **En Route** et dort intelligemment jusqu'à la prochaine arrivée
-- ✅ Gère les camions **Garés** (retour Au Repos)
-- ✅ Gère les camions **En Attente** (réparation/CT)
-- ✅ Vérifie les ressources (Diesel, kWh, CO2) et achète si nécessaire
+- ✅ Gère les camions **Garés** (retour Au Repos) (PAS DANS LA VERSION ACTUEL)
+- ✅ Gère les camions **En Attente** (réparation/CT) (PAS DANS LA VERSION ACTUEL)
+- ✅ Vérifie les ressources (Diesel, kWh, CO2) et achète si nécessaire (ACHAT TOUS LES x DELAY) => voir config.py
 - ✅ Ferme les popups automatiquement
 - ✅ OCR via Tesseract pour lire le tableau de bord
 
