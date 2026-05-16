@@ -322,173 +322,21 @@ class OCR:
         for idx, line in enumerate(data_lines):
             row_y = y1 + int(zone_h * (idx + 1.5) / max(len(data_lines), 1))
 
-            row = {"row_y": row_y, "reg": None, "usure": None,
+            row = {"row_y": row_y, "reg": f"CAM_{idx+1}", "usure": None,
                    "ct_jours": None, "arrivee_s": None,
                    "pret_dans_s": None, "destination": None,
                    "itineraire": None}
 
-            # Immatriculation
-            for token in re2.findall(r'\b([A-Z0-9]{5,8})\b', line.upper()):
-                if re2.search(r'[A-Z]', token) and re2.search(r'\d{3,}', token):
-                    row["reg"] = token
-                    break
-            if not row["reg"]:
-                row["reg"] = f"CAM_{idx+1}"
-
-            # Destination — codes 3 lettres destinations connues
-            # Exclut les origines (STR, SAA) et mots-clés tableau
-            skip = {"STR","SAA","LOC","LIG","SEC","REF","SèC","RéF",
-                    "SEQ","FAG","KAY","ORI","ERE","TEM","ARR","PRO",
-                    "SEE","SEc","sTR","s8j","58j"}
+            # Destination — codes 3 lettres connus
             known_dest = {"RAS","HAG","KEH","BAD","OFF","MUL","KAR",
                           "NEU","LYO","PAR","MAR","NAN","BOR","TOU",
                           "LIL","NIC","GRE","MON","REN","DIJ","MET",
-                          "SXB","STA","AMB","CAR","DAX","GAP","NIM",
-                          "ROC","SEN","TRO","VAL","VAN"}
+                          "SXB","STA","AMB","DAX","GAP","NIM","TRO"}
             for word in re2.findall(r'\b([A-Z]{3})\b', line.upper()):
                 if word in known_dest:
                     row["destination"] = word
                     break
 
-            rows.append(row)
-            log.info("  [%d] %s → %s", idx+1, row["reg"],
-                     row["destination"] or "?")
-
-        return rows
-        """
-        Lit le tableau agrandi en parsant le texte brut ligne par ligne.
-        Utilise image_to_string (plus robuste que image_to_data pour tableaux).
-        """
-        import re as re2
-
-        h, w = img.shape[:2]
-        y1 = int(h * 0.08)
-        y2 = int(h * 0.47)
-        zone = img[y1:y2, 0:int(w*0.95)]
-        zone_h = y2 - y1
-
-        proc, sc = self._pre_table(zone)
-        txt = pytesseract.image_to_string(
-            proc, lang=config.OCR_LANG,
-            config="--psm 4 --oem 3")  # psm 4 = colonne de texte, mieux pour 1 ligne
-
-        log.debug("read_table texte brut: %s", repr(txt[:300]))
-
-        rows = []
-        data_lines = []
-        for line in txt.strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            # Ignore en-têtes
-            if re2.search(r'\bType\b|\bReg\b|\bUsure\b|\bItinéraire\b|\bItineraire\b',
-                          line, re2.I):
-                continue
-            # Ligne valide = contient un % ou des jours
-            if (re2.search(r'\d+[.,]\d+\s*%', line) or
-                    re2.search(r'\d+\s*[jJ)\]]\b', line)):
-                data_lines.append(line)
-
-        log.debug("read_table: %d lignes données", len(data_lines))
-
-        for idx, line in enumerate(data_lines):
-            # Position Y dans l'image originale
-            row_y = y1 + int(zone_h * (idx + 1.5) / max(len(data_lines), 1))
-
-            row = {"row_y": row_y, "reg": None, "usure": None,
-                   "ct_jours": None, "arrivee_s": None,
-                   "pret_dans_s": None, "destination": None,
-                   "itineraire": None}
-
-            # Immatriculation — très assoupli car l'OCR fait beaucoup de confusions
-            # On prend le premier token qui ressemble à une immat (min 5 chars alpanum)
-            for token in re2.findall(r'\b([A-Z0-9]{5,8})\b', line.upper()):
-                # Doit avoir au moins 2 lettres et 3 chiffres (dans n'importe quel ordre)
-                if (re2.search(r'[A-Z]', token) and
-                        re2.search(r'\d{3,}', token) and
-                        len(token) >= 5):
-                    row["reg"] = token
-                    break
-            if not row["reg"]:
-                row["reg"] = f"CAM_{idx+1}"
-
-            # Usure % — avec ou sans décimale
-            # "3.1%" → 3.1, "300%" → 30.0 (OCR mange le point)
-            m = re2.search(r'(\d{1,2})[.,](\d+)\s*%', line)
-            if m:
-                try:
-                    val = float(f"{m.group(1)}.{m.group(2)}")
-                    if 0 <= val <= 100:
-                        row["usure"] = val
-                except ValueError:
-                    pass
-            if row["usure"] is None:
-                m = re2.search(r'\b(\d{1,3})\s*%', line)
-                if m:
-                    try:
-                        val = int(m.group(1))
-                        if val > 100:
-                            val = val / 10.0  # "300%" → 30.0%
-                        if 0 <= val <= 100:
-                            row["usure"] = val
-                    except ValueError:
-                        pass
-            if row["usure"] is None:
-                # Sans décimale : "31%" = 3.1%, "22%" = 2.2%, "103%" = 10.3%
-                # Heuristique : si >= 10 et <= 999 et se termine par % → divise par 10
-                m = re2.search(r'\b(\d{2,3})\s*%', line)
-                if m:
-                    try:
-                        raw = int(m.group(1))
-                        if 10 <= raw <= 999:
-                            val = raw / 10.0
-                            if val <= 100:
-                                row["usure"] = val
-                    except ValueError:
-                        pass
-
-            # CT jours — l'OCR lit "j" comme ")", "]", "}" parfois
-            m = re2.search(r'(\d{1,3})\s*[jJ)\]}\|]', line)
-            if m:
-                try:
-                    val = int(m.group(1))
-                    if 0 < val <= 365:
-                        row["ct_jours"] = val
-                except ValueError:
-                    pass
-
-            # Timer
-            m = re2.search(r'(\d{1,3}):(\d{2}):(\d{2})', line)
-            if m:
-                secs = (int(m.group(1))*3600 +
-                        int(m.group(2))*60 +
-                        int(m.group(3)))
-                if etat == "en_route":
-                    row["arrivee_s"] = secs
-                elif etat == "en_attente":
-                    row["pret_dans_s"] = secs
-
-            # Destination
-            known = {"RAS","HAG","KEH","BAD","SAA","OFF","MUL","KAR",
-                     "LYO","PAR","MAR","NAN","BOR","TOU","LIL","NIC",
-                     "GRE","MON","REN","DIJ","MET","SXB"}
-            for word in re2.findall(r'\b([A-Z]{3})\b', line.upper()):
-                if word in known:
-                    row["destination"] = word
-                    break
-
-            # Itinéraire
-            if re2.search(r'\bLocal\b', line, re2.I):
-                row["itineraire"] = "Local"
-            elif re2.search(r'\bLigne\b', line, re2.I):
-                row["itineraire"] = "Ligne"
-
-            rows.append(row)
-            log.info("  [%d] %s usure=%s CT=%s dest=%s y=%d",
-                     idx+1, row["reg"], row["usure"],
-                     row["ct_jours"], row["destination"], row_y)
-
-        return rows
 
     def read_table_en_route(self, img):
         """

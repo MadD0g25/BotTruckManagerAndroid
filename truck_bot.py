@@ -532,7 +532,14 @@ class TruckBot:
                      T["titre_kwh"], "kWh", config.KWH_SEUIL)
         acted |= self._acheter_ressource(config.COORDS_CO2,
                      T["titre_co2"], "CO2", config.CO2_SEUIL)
-        self.agrandir_panneau()
+        # Laisse l'interface se stabiliser puis agrandit
+        time.sleep(1.5)
+        self.adb.tap(*config.COORDS_AGRANDIR)
+        time.sleep(1.0)
+        self.adb.tap(*config.COORDS_AGRANDIR)
+        time.sleep(0.5)
+        log.info("⛶ Panneau agrandi (après ressources)")
+        self._agrandi = True
         return acted
 
     # ── Siège ─────────────────────────────────────────────────────
@@ -620,7 +627,9 @@ class TruckBot:
                 # ── Ferme popups ──────────────────────────────
                 self.dismiss_popups()
 
-                # ── Force l'agrandissement à chaque cycle ─────
+                # ── Va sur Au Repos + agrandit ────────────────
+                self.adb.tap(*config.COORDS_TAB_AU_REPOS)
+                time.sleep(0.8)
                 self.agrandir_panneau()
                 time.sleep(0.5)
                 s = self._s()
@@ -634,12 +643,8 @@ class TruckBot:
                 results = self.ocr.scan(s) if s is not None else []
                 etat    = self.ocr.detect_panel_state(s, results=results) if s is not None else None
 
-                # ── Lit le tableau ────────────────────────────
-                rows = []
-                if s is not None and etat:
-                    rows = self.ocr.read_table_agrandi(s, etat)
-
                 # ── Résumé ────────────────────────────────────
+                rows = []
                 self._log_resume(etat, rows, cash, coins, subv)
 
                 # ── Timers expirés ────────────────────────────
@@ -651,26 +656,22 @@ class TruckBot:
 
                 # ── Actions selon état ────────────────────────
                 if etat == "au_repos":
-                    count = len(rows)
-                    log.info("  🏠 Camions Au Repos : %d", count)
-                    if count > 0:
-                        self.action_au_repos(rows)
-                    else:
-                        # Pas de camions Au Repos → va lire En Route si pas de timers
-                        if not self.timers.timers:
-                            log.info("  Aucun timer actif → lecture En Route")
-                            self.action_lire_tous_etats()
-                        else:
-                            log.info("  Aucun camion Au Repos")
+                    # Tape toujours Tout Envoyer — le jeu gère si rien à envoyer
+                    self.action_au_repos(rows)
 
                 elif etat == "en_route":
-                    log.info("  🚛 En Route — timers actifs")
+                    if not self.timers.timers:
+                        log.info("  🚛 En Route — lecture timers...")
+                        self.action_lire_tous_etats()
+                    else:
+                        log.info("  🚛 En Route — timers actifs")
 
-                elif etat == "en_attente" and rows:
-                    self.action_en_attente(rows)
+                elif etat == "en_attente":
+                    rows = self.ocr.read_table_agrandi(s, "en_attente") or []
+                    if rows:
+                        self.action_en_attente(rows)
 
                 elif etat in ("gare", None):
-                    # Gare ignoré + état inconnu → retour Au Repos
                     log.info("  ↩️  État %s → tap Au Repos", etat)
                     self.adb.tap(*config.COORDS_TAB_AU_REPOS)
                     time.sleep(1.5)
